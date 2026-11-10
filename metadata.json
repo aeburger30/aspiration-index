@@ -1,0 +1,6 @@
+{
+  "name": "Aspiration Index Scale",
+  "description": "An interactive, private educational tool for students to complete the Aspiration Index Scale, analyze intrinsic vs. extrinsic goals, visualize motivational profiles, and get secure, personalized psychological feedback powered by Gemini.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
