@@ -1,206 +1,216 @@
-import { useState, useEffect } from "react";
-import { AspirationCategory, CategoryScore, FactorScores, GoalRatings, StudentProfile } from "./types";
-import { ASPIRATION_CATEGORIES, ASPIRATION_GOALS } from "./data";
-import Introduction from "./components/Introduction";
+import { useCallback, useState } from "react";
 import AssessmentWizard from "./components/AssessmentWizard";
+import Introduction from "./components/Introduction";
 import ResultsDashboard from "./components/ResultsDashboard";
-import { Compass, Sparkles, BookOpen, User } from "lucide-react";
+import { ASPIRATION_GOALS, createSampleRatings } from "./data";
+import { GoalRatings, PartialGoalRatings } from "./types";
+import { Compass } from "lucide-react";
+
+const STORAGE_KEYS = {
+  results: "aspiration_index_results",
+  draft: "aspiration_index_draft",
+  draftIndex: "aspiration_index_draft_index",
+  reflections: "aspiration_index_reflections_v1",
+} as const;
+
+function readJsonStorage<T>(key: string): T | null {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+function countCompletedDraftItems(draft: Record<number, PartialGoalRatings>): number {
+  return ASPIRATION_GOALS.filter((g) => {
+    const entry = draft[g.id];
+    return (
+      entry &&
+      typeof entry.importance === "number" &&
+      typeof entry.likelihood === "number" &&
+      typeof entry.attainment === "number"
+    );
+  }).length;
+}
 
 export default function App() {
-  const [appMode, setAppMode] = useState<"intro" | "wizard" | "results">("intro");
-  const [profile, setProfile] = useState<StudentProfile | null>(null);
-  const [ratings, setRatings] = useState<Record<number, GoalRatings>>({});
+  const [completedRatings, setCompletedRatings] = useState<Record<number, GoalRatings> | null>(() =>
+    readJsonStorage<Record<number, GoalRatings>>(STORAGE_KEYS.results),
+  );
+  const [draftRatings, setDraftRatings] = useState<Record<number, PartialGoalRatings>>(
+    () => readJsonStorage<Record<number, PartialGoalRatings>>(STORAGE_KEYS.draft) ?? {},
+  );
+  const [draftIndex, setDraftIndex] = useState<number>(() => {
+    const saved = localStorage.getItem(STORAGE_KEYS.draftIndex);
+    const parsed = saved ? Number.parseInt(saved, 10) : 0;
+    return Number.isFinite(parsed) ? parsed : 0;
+  });
 
-  // 1. Initial State Hydration from Browser LocalStorage on Mount
-  useEffect(() => {
-    const savedProfile = localStorage.getItem("aspiration_index_profile");
-    const savedRatings = localStorage.getItem("aspiration_index_results");
+  const [mode, setMode] = useState<"intro" | "wizard" | "results">(() =>
+    readJsonStorage<Record<number, GoalRatings>>(STORAGE_KEYS.results) ? "results" : "intro",
+  );
+  const [isViewingSample, setIsViewingSample] = useState<boolean>(false);
 
-    if (savedProfile) {
-      setProfile(JSON.parse(savedProfile));
-    }
-
-    if (savedRatings) {
-      setRatings(JSON.parse(savedRatings));
-      setAppMode("results");
-    } else {
-      // Check if there is an active wizard progress draft
-      const activeDraft = localStorage.getItem("aspiration_index_draft");
-      if (activeDraft) {
-        setRatings(JSON.parse(activeDraft));
+  const handleSaveDraft = useCallback(
+    (nextDraft: Record<number, PartialGoalRatings>, index: number) => {
+      setDraftRatings(nextDraft);
+      setDraftIndex(index);
+      if (Object.keys(nextDraft).length > 0) {
+        localStorage.setItem(STORAGE_KEYS.draft, JSON.stringify(nextDraft));
+        localStorage.setItem(STORAGE_KEYS.draftIndex, String(index));
       }
-    }
-  }, []);
+    },
+    [],
+  );
 
-  // Sync draft and profile data when profile updates
-  useEffect(() => {
-    if (profile) {
-      localStorage.setItem("aspiration_index_profile", JSON.stringify(profile));
-    } else {
-      localStorage.removeItem("aspiration_index_profile");
-    }
-  }, [profile]);
-
-  // Check state to deduce active buttons in intro screen
-  const hasSavedSession = localStorage.getItem("aspiration_index_draft") !== null;
-  const hasSavedResults = localStorage.getItem("aspiration_index_results") !== null;
-
-  const handleStart = (studentProfile: StudentProfile) => {
-    setProfile(studentProfile);
-    setAppMode("wizard");
+  const handleStartFresh = () => {
+    setIsViewingSample(false);
+    setDraftRatings({});
+    setDraftIndex(0);
+    localStorage.removeItem(STORAGE_KEYS.draft);
+    localStorage.removeItem(STORAGE_KEYS.draftIndex);
+    setMode("wizard");
   };
 
-  const handleResumeProgress = () => {
-    const draft = localStorage.getItem("aspiration_index_draft");
-    if (draft) {
-      setRatings(JSON.parse(draft));
-    }
-    setAppMode("wizard");
+  const handleResumeDraft = () => {
+    setIsViewingSample(false);
+    setMode("wizard");
   };
 
-  const handleViewResults = () => {
-    const saved = localStorage.getItem("aspiration_index_results");
-    if (saved) {
-      setRatings(JSON.parse(saved));
-    }
-    setAppMode("results");
+  const handleLoadSample = () => {
+    setIsViewingSample(true);
+    setMode("results");
   };
 
   const handleWizardComplete = (finalRatings: Record<number, GoalRatings>) => {
-    setRatings(finalRatings);
-    // Write completed assessments directly into localstorage
-    localStorage.setItem("aspiration_index_results", JSON.stringify(finalRatings));
-    // Clear the active draft since progress is finished
-    localStorage.removeItem("aspiration_index_draft");
-    localStorage.removeItem("aspiration_index_draft_index");
-    setAppMode("results");
+    setCompletedRatings(finalRatings);
+    setIsViewingSample(false);
+    setDraftRatings({});
+    setDraftIndex(0);
+    localStorage.setItem(STORAGE_KEYS.results, JSON.stringify(finalRatings));
+    localStorage.removeItem(STORAGE_KEYS.draft);
+    localStorage.removeItem(STORAGE_KEYS.draftIndex);
+    setMode("results");
   };
 
-  const handleWizardCancel = () => {
-    setAppMode("intro");
+  const handleEditAnswers = () => {
+    if (!completedRatings) return;
+    setDraftRatings(completedRatings);
+    setDraftIndex(0);
+    setIsViewingSample(false);
+    setMode("wizard");
   };
 
   const handleReset = () => {
-    if (window.confirm("Are you sure you want to clear your current progress and results? This deletes your offline ratings from your browser storage to protect your privacy.")) {
-      setRatings({});
-      setProfile(null);
-      setAppMode("intro");
-      localStorage.removeItem("aspiration_index_results");
+    if (isViewingSample) {
+      setIsViewingSample(false);
+      setMode("intro");
+      return;
+    }
+
+    if (
+      window.confirm(
+        "Clear your saved ratings and reflection notes from this browser and start fresh?",
+      )
+    ) {
+      setCompletedRatings(null);
+      setDraftRatings({});
+      setDraftIndex(0);
+      setIsViewingSample(false);
+      localStorage.removeItem(STORAGE_KEYS.results);
+      localStorage.removeItem(STORAGE_KEYS.draft);
+      localStorage.removeItem(STORAGE_KEYS.draftIndex);
+      localStorage.removeItem(STORAGE_KEYS.reflections);
+      // Clean up legacy storage keys from earlier versions if present
       localStorage.removeItem("aspiration_index_profile");
-      localStorage.removeItem("aspiration_index_draft");
-      localStorage.removeItem("aspiration_index_draft_index");
       localStorage.removeItem("aspiration_index_ai_feedback");
+      setMode("intro");
     }
   };
 
-  // 2. Core Scoring Framework (Self-Determination Theory Matrix Parsing)
-  const computeAspirationScores = (): Record<AspirationCategory, CategoryScore> => {
-    const scores: Record<AspirationCategory, CategoryScore> = {} as any;
-
-    ASPIRATION_CATEGORIES.forEach((cat) => {
-      const catGoals = ASPIRATION_GOALS.filter((g) => g.category === cat.name);
-      let totalImportance = 0;
-      let totalLikelihood = 0;
-      let totalAttainment = 0;
-
-      catGoals.forEach((goal) => {
-        const rating = ratings[goal.id] || { importance: 4, likelihood: 4, attainment: 4 };
-        totalImportance += rating.importance;
-        totalLikelihood += rating.likelihood;
-        totalAttainment += rating.attainment;
-      });
-
-      scores[cat.name] = {
-        importance: totalImportance / catGoals.length,
-        likelihood: totalLikelihood / catGoals.length,
-        attainment: totalAttainment / catGoals.length,
-      };
-    });
-
-    return scores;
-  };
-
-  const computeFactorScores = (scores: Record<AspirationCategory, CategoryScore>): FactorScores => {
-    const intrinsicCats: AspirationCategory[] = ["Personal growth", "Relationships", "Community"];
-    const extrinsicCats: AspirationCategory[] = ["Wealth", "Fame", "Image"];
-
-    const getAverageForList = (cats: AspirationCategory[], metric: keyof CategoryScore): number => {
-      const sum = cats.reduce((acc, cat) => acc + scores[cat][metric], 0);
-      return sum / cats.length;
-    };
-
-    const intrinsicImportance = getAverageForList(intrinsicCats, "importance");
-    const extrinsicImportance = getAverageForList(extrinsicCats, "importance");
-
-    return {
-      intrinsicImportance,
-      extrinsicImportance,
-      intrinsicLikelihood: getAverageForList(intrinsicCats, "likelihood"),
-      extrinsicLikelihood: getAverageForList(extrinsicCats, "likelihood"),
-      intrinsicAttainment: getAverageForList(intrinsicCats, "attainment"),
-      extrinsicAttainment: getAverageForList(extrinsicCats, "attainment"),
-      relativeIntrinsicIndex: intrinsicImportance - extrinsicImportance,
-    };
-  };
-
-  const finalScores = appMode === "results" ? computeAspirationScores() : null;
-  const factorScores = finalScores ? computeFactorScores(finalScores) : null;
+  const draftCount = countCompletedDraftItems(draftRatings);
+  const activeResultsRatings = isViewingSample ? createSampleRatings() : completedRatings;
 
   return (
-    <div className="min-h-screen bg-slate-55 dark:bg-slate-900 text-slate-800 dark:text-slate-100 font-sans transition-colors duration-200">
-      {/* Upper Navigation Bar */}
-      <header className="sticky top-0 z-50 bg-white/80 dark:bg-slate-950/80 backdrop-blur border-b border-slate-200/50 dark:border-slate-800/50 print:hidden select-none">
-        <div className="max-w-6xl mx-auto px-4 py-4 flex justify-between items-center">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-xl bg-slate-900 dark:bg-white flex items-center justify-center text-white dark:text-slate-900 shadow-sm border border-slate-200 dark:border-slate-800">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 font-sans">
+      <header className="sticky top-0 z-40 bg-white/85 dark:bg-slate-950/85 backdrop-blur border-b border-slate-200 dark:border-slate-800 print:hidden">
+        <div className="max-w-5xl mx-auto px-4 py-3.5 flex items-center justify-between gap-4">
+          <button
+            type="button"
+            onClick={() => setMode("intro")}
+            className="flex items-center gap-2.5 text-left group cursor-pointer"
+          >
+            <div className="w-8 h-8 rounded-xl bg-slate-900 dark:bg-white flex items-center justify-center text-white dark:text-slate-900 shadow-xs">
               <Compass size={16} />
             </div>
             <div>
-              <span className="font-semibold text-sm tracking-tight text-slate-950 dark:text-slate-100 block">Aspirations Index Lab</span>
-              <span className="text-[9px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest block -mt-1">Self-Determination Research</span>
+              <span className="font-bold text-sm tracking-tight text-slate-950 dark:text-slate-100 block group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
+                Aspiration Index
+              </span>
+              <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 block -mt-0.5">
+                Self-Determination Theory Lab
+              </span>
             </div>
-          </div>
+          </button>
 
-          <div className="flex items-center gap-4">
-            {profile && (
-              <div className="hidden sm:flex items-center gap-1.5 text-[10px] font-bold text-slate-500 bg-slate-50 dark:bg-slate-900 px-3 py-1.5 rounded-full border border-slate-200 dark:border-slate-800 font-medium">
-                <User size={12} />
-                <span>{profile.ageGroup}</span>
-              </div>
+          <div className="flex items-center gap-2 text-xs">
+            {mode !== "intro" && (
+              <button
+                type="button"
+                onClick={() => setMode("intro")}
+                className="px-3 py-1.5 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-900 font-medium transition-colors cursor-pointer"
+              >
+                Overview
+              </button>
             )}
-            <div className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider text-slate-400 bg-slate-100 dark:bg-slate-905 px-2.5 py-1 rounded border border-slate-200 dark:border-slate-800">
-              <BookOpen size={11} className="text-slate-500" />
-              <span>Offline Persistence</span>
-            </div>
+            {completedRatings && mode !== "results" && (
+              <button
+                type="button"
+                onClick={() => {
+                  setIsViewingSample(false);
+                  setMode("results");
+                }}
+                className="px-3 py-1.5 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-950 font-semibold transition-colors cursor-pointer"
+              >
+                Your Results
+              </button>
+            )}
           </div>
         </div>
       </header>
 
-      {/* Main Container Stage */}
-      <main className="max-w-6xl mx-auto px-4 py-10 print:py-0">
-        {appMode === "intro" && (
+      <main className="max-w-5xl mx-auto px-4 py-8 sm:py-10 print:py-0">
+        {mode === "intro" && (
           <Introduction
-            onStart={handleStart}
-            hasSavedSession={hasSavedSession}
-            onResume={handleResumeProgress}
-            hasSavedResults={hasSavedResults}
-            onViewResults={handleViewResults}
+            onStart={handleStartFresh}
+            onLoadSample={handleLoadSample}
+            draftCount={draftCount}
+            onResume={handleResumeDraft}
+            hasSavedResults={Boolean(completedRatings)}
+            onViewResults={() => {
+              setIsViewingSample(false);
+              setMode("results");
+            }}
           />
         )}
 
-        {appMode === "wizard" && (
+        {mode === "wizard" && (
           <AssessmentWizard
+            initialDraft={draftRatings}
+            initialIndex={draftIndex}
+            onSaveDraft={handleSaveDraft}
             onComplete={handleWizardComplete}
-            onCancel={handleWizardCancel}
-            savedRatings={ratings}
+            onCancel={() => setMode("intro")}
           />
         )}
 
-        {appMode === "results" && finalScores && factorScores && profile && (
+        {mode === "results" && activeResultsRatings && (
           <ResultsDashboard
-            scores={finalScores}
-            factorScores={factorScores}
-            profile={profile}
+            ratings={activeResultsRatings}
+            isSample={isViewingSample}
+            onEditAnswers={handleEditAnswers}
+            onStartOwnAssessment={handleStartFresh}
             onReset={handleReset}
           />
         )}

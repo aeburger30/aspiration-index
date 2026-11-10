@@ -1,367 +1,442 @@
-import { AspirationCategory, CategoryScore, FactorScores } from "../types";
-import { ASPIRATION_CATEGORIES } from "../data";
 import { useState } from "react";
-import * as Icons from "lucide-react";
+import { ASPIRATION_CATEGORIES, ASPIRATION_GOALS } from "../data";
+import { describeCategoryPattern } from "../scoring";
+import {
+  AspirationCategory,
+  AssessmentAnalysis,
+  CategoryMeta,
+  GoalRatings,
+  RatingDimension,
+} from "../types";
+import {
+  Activity,
+  Coins,
+  Eye,
+  HeartHandshake,
+  Info,
+  Scale,
+  SlidersHorizontal,
+  Sparkles,
+  Sprout,
+  Users,
+} from "lucide-react";
 
 interface VisualizersProps {
-  scores: Record<AspirationCategory, CategoryScore>;
-  factorScores: FactorScores;
+  analysis: AssessmentAnalysis;
+  ratings: Record<number, GoalRatings>;
 }
 
-export default function Visualizers({ scores, factorScores }: VisualizersProps) {
-  const [activeTab, setActiveTab] = useState<"importance" | "likelihood" | "attainment">("importance");
-  const [hoveredCategory, setHoveredCategory] = useState<AspirationCategory | null>(null);
+function CategoryIcon({
+  icon,
+  className,
+}: {
+  icon: CategoryMeta["icon"];
+  className?: string;
+}) {
+  const props = { size: 16, className };
+  switch (icon) {
+    case "Sprout":
+      return <Sprout {...props} />;
+    case "Users":
+      return <Users {...props} />;
+    case "HeartHandshake":
+      return <HeartHandshake {...props} />;
+    case "Coins":
+      return <Coins {...props} />;
+    case "Sparkles":
+      return <Sparkles {...props} />;
+    case "Eye":
+      return <Eye {...props} />;
+    case "Activity":
+      return <Activity {...props} />;
+  }
+}
 
-  // Helper dynamically select lucide icons
-  const renderIcon = (iconName: string, className: string) => {
-    switch (iconName) {
-      case "Sprout":
-        return <Icons.Sprout className={className} size={18} />;
-      case "Users2":
-        return <Icons.Users className={className} size={18} />;
-      case "HeartHandshake":
-        return <Icons.HeartHandshake className={className} size={18} />;
-      case "Coins":
-        return <Icons.Coins className={className} size={18} />;
-      case "Sparkles":
-        return <Icons.Sparkles className={className} size={18} />;
-      case "Shirt":
-        return <Icons.Shirt className={className} size={18} />;
-      case "Activity":
-        return <Icons.Activity className={className} size={18} />;
-      default:
-        return <Icons.HelpCircle className={className} size={18} />;
-    }
-  };
+export default function Visualizers({ analysis, ratings }: VisualizersProps) {
+  const [scoringView, setScoringView] = useState<"raw" | "centered">("raw");
+  const [balanceDimension, setBalanceDimension] = useState<RatingDimension>("importance");
+  const [selectedCategory, setSelectedCategory] = useState<AspirationCategory>(
+    analysis.highestOverall,
+  );
 
-  const getMetricLabel = (tab: typeof activeTab) => {
-    switch (tab) {
-      case "importance":
-        return "Importance (What you value)";
-      case "likelihood":
-        return "Likelihood (What you expect)";
-      case "attainment":
-        return "Attainment (What you feel satisfied with)";
-    }
-  };
+  const intrinsicVal = analysis.intrinsic[balanceDimension];
+  const extrinsicVal = analysis.extrinsic[balanceDimension];
+  const totalPair = intrinsicVal + extrinsicVal;
+  const intrinsicShare = totalPair > 0 ? (intrinsicVal / totalPair) * 100 : 50;
+  const diff = intrinsicVal - extrinsicVal;
 
-  // Compute balance indicators
-  const intrinsicVal =
-    activeTab === "importance"
-      ? factorScores.intrinsicImportance
-      : activeTab === "likelihood"
-      ? factorScores.intrinsicLikelihood
-      : factorScores.intrinsicAttainment;
+  const selectedMeta =
+    ASPIRATION_CATEGORIES.find((c) => c.name === selectedCategory) ?? ASPIRATION_CATEGORIES[0];
+  const selectedScore = analysis.categories[selectedCategory];
+  const selectedPattern = describeCategoryPattern(
+    selectedCategory,
+    selectedScore,
+    selectedMeta.factor,
+  );
+  const selectedItems = ASPIRATION_GOALS.filter((g) => g.category === selectedCategory);
 
-  const extrinsicVal =
-    activeTab === "importance"
-      ? factorScores.extrinsicImportance
-      : activeTab === "likelihood"
-      ? factorScores.extrinsicLikelihood
-      : factorScores.extrinsicAttainment;
+  const renderCategoryCard = (meta: CategoryMeta) => {
+    const score = analysis.categories[meta.name];
+    const isSelected = selectedCategory === meta.name;
+    const centered = score.centeredImportance;
+    // Clamp centered visualization within [-3, +3]
+    const centeredWidthPct = Math.min(Math.abs(centered) / 3, 1) * 50;
 
-  const totalBalance = intrinsicVal + extrinsicVal;
-  const intrinsicPercent = totalBalance > 0 ? (intrinsicVal / totalBalance) * 100 : 50;
-
-  return (
-    <div className="space-y-8" id="visualizers-dashboard">
-      {/* Intrinsic vs Extrinsic Dial Balance Indicator */}
-      <div className="p-6 bg-white dark:bg-slate-950 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
-        <h3 className="text-xs font-bold tracking-widest text-slate-400 uppercase mb-4 text-center">
-          Core Motivation Balance (Based on {getMetricLabel(activeTab)})
-        </h3>
-
-        <div className="flex flex-col sm:flex-row items-center justify-around gap-6">
-          <div className="text-center sm:text-right w-full sm:w-1/3">
-            <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-widest block">
-              Intrinsic Drivers
+    return (
+      <button
+        key={meta.name}
+        type="button"
+        onClick={() => setSelectedCategory(meta.name)}
+        className={`w-full text-left p-4 rounded-xl border transition-all cursor-pointer ${
+          isSelected
+            ? "border-indigo-500 dark:border-indigo-400 bg-indigo-50/30 dark:bg-indigo-950/25 ring-1 ring-indigo-500/20"
+            : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 hover:border-slate-300 dark:hover:border-slate-700"
+        }`}
+      >
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <div className="flex items-center gap-2">
+            <CategoryIcon icon={meta.icon} className={meta.accentText} />
+            <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
+              {meta.name}
             </span>
-            <span className="text-3xl font-black text-slate-800 dark:text-slate-100">
-              {intrinsicVal.toFixed(2)}
-            </span>
-            <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">Focus on personal growth, meaningful relationships, and community contribution.</p>
           </div>
 
-          {/* Balance Scale Meter */}
-          <div className="w-full sm:w-1/3 flex flex-col items-center">
-            <div className="relative w-full h-4 bg-slate-100 dark:bg-slate-900 rounded-full overflow-hidden flex shadow-inner border border-slate-200/50 dark:border-slate-800/50 animate-pulse-slow">
-              <div
-                className="h-full bg-indigo-600 transition-all duration-500"
-                style={{ width: `${intrinsicPercent}%` }}
-              />
-              <div
-                className="h-full bg-slate-400 transition-all duration-500"
-                style={{ width: `${100 - intrinsicPercent}%` }}
-              />
-              {/* Center Divider Anchor */}
-              <div className="absolute left-1/2 top-0 transform -translate-x-1/2 w-1 h-full bg-white dark:bg-slate-950 shadow-sm" />
-            </div>
-
-            <div className="flex justify-between w-full mt-2 text-[9px] font-bold tracking-wider text-slate-400 uppercase">
-              <span>Intrinsic</span>
-              <span>Extrinsic</span>
-            </div>
-
-            {/* Scale visual readout */}
-            <div className="mt-3 text-[10px] font-bold text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-900 px-3 py-1 rounded-full border border-slate-250 dark:border-slate-800">
-              {intrinsicPercent > 55 ? (
-                <span className="text-indigo-600 dark:text-indigo-400 font-bold uppercase tracking-wider">
-                  Strong Intrinsic Focus (+{((intrinsicPercent - 50) * 2).toFixed(0)}% relative focus)
-                </span>
-              ) : intrinsicPercent < 45 ? (
-                <span className="text-slate-600 dark:text-slate-400 font-bold uppercase tracking-wider">
-                  Extrinsic Focus Focus (+{((50 - intrinsicPercent) * 2).toFixed(0)}% relative focus)
-                </span>
-              ) : (
-                <span className="text-slate-500 dark:text-slate-300 font-bold uppercase tracking-wider font-medium">
-                  Harmoniously Balanced Focus (~50/50 Ratio)
+          {scoringView === "raw" ? (
+            <div className="flex items-center gap-1.5 text-[11px]">
+              <span className="font-semibold text-slate-800 dark:text-slate-200">
+                {score.importance.toFixed(2)}
+              </span>
+              <span className="text-slate-400">/ 7</span>
+              {score.gap > 1.0 && (
+                <span className="ml-1 px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800/60 text-[10px] font-semibold">
+                  Gap +{score.gap.toFixed(1)}
                 </span>
               )}
             </div>
-          </div>
-
-          <div className="text-center sm:text-left w-full sm:w-1/3">
-            <span className="text-xs font-semibold text-slate-400 uppercase tracking-widest block">
-              Extrinsic Drivers
-            </span>
-            <span className="text-3xl font-black text-slate-850 dark:text-slate-100">
-              {extrinsicVal.toFixed(2)}
-            </span>
-            <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">Focus on wealth, fame, and physical image relative to others.</p>
-          </div>
-        </div>
-      </div>
-
-      {/* Tabs selector */}
-      <div className="flex border-b border-slate-200 dark:border-slate-800">
-        {(["importance", "likelihood", "attainment"] as const).map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`flex-1 py-3 px-1 text-center font-bold text-xs uppercase tracking-wider border-b-2 transition-all cursor-pointer ${
-              activeTab === tab
-                ? "border-slate-900 text-slate-900 dark:border-white dark:text-white"
-                : "border-transparent text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
-            }`}
-          >
-            {tab}
-          </button>
-        ))}
-      </div>
-
-      {/* Grouped Category Breakdown Charts */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Intrinsic Factor Column */}
-        <div className="space-y-4">
-          <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-2">
-            <div className="w-2 h-2 rounded-full bg-slate-900 dark:bg-white" />
-            <h4 className="text-xs font-bold text-slate-900 dark:text-slate-200 uppercase tracking-widest">
-              Intrinsic Aspirations
-            </h4>
-          </div>
-
-          <div className="space-y-4">
-            {ASPIRATION_CATEGORIES.filter((c) => c.type === "intrinsic").map((category) => {
-              const score = scores[category.name][activeTab];
-              const scorePercent = (score / 7) * 100;
-              const isHovered = hoveredCategory === category.name;
-
-              return (
-                <div
-                  key={category.name}
-                  onMouseEnter={() => setHoveredCategory(category.name)}
-                  onMouseLeave={() => setHoveredCategory(null)}
-                  className={`p-4 rounded-xl border transition-all duration-250 cursor-pointer ${
-                    isHovered
-                      ? "border-slate-400 bg-slate-50/50 dark:border-slate-700/50 dark:bg-slate-900/30"
-                      : "border-slate-200/60 dark:border-slate-800/60 bg-white dark:bg-slate-950"
-                  }`}
-                >
-                  <div className="flex justify-between items-center mb-1.5">
-                    <div className="flex items-center gap-2">
-                      {renderIcon(category.icon, "text-slate-700 dark:text-slate-350")}
-                      <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                        {category.name}
-                      </span>
-                    </div>
-                    <span className="text-xs font-semibold text-slate-800 dark:text-slate-100 bg-slate-50 dark:bg-slate-900 px-2.5 py-0.5 rounded border border-slate-200 dark:border-slate-800">
-                      {score.toFixed(2)} / 7
-                    </span>
-                  </div>
-
-                  {/* Progressive Bar */}
-                  <div className="w-full h-1.5 bg-slate-100 dark:bg-slate-900 rounded-full overflow-hidden flex border border-slate-150 dark:border-slate-800">
-                    <div
-                      className="h-full bg-indigo-600 rounded-full transition-all duration-500 ease-out"
-                      style={{ width: `${scorePercent}%` }}
-                    />
-                  </div>
-
-                  {isHovered && (
-                    <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed animate-fade-in">
-                      {category.description}
-                    </p>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Extrinsic Factor Column */}
-        <div className="space-y-4">
-          <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-2">
-            <div className="w-2 h-2 rounded-full bg-slate-400" />
-            <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">
-              Extrinsic Aspirations
-            </h4>
-          </div>
-
-          <div className="space-y-4">
-            {ASPIRATION_CATEGORIES.filter((c) => c.type === "extrinsic").map((category) => {
-              const score = scores[category.name][activeTab];
-              const scorePercent = (score / 7) * 100;
-              const isHovered = hoveredCategory === category.name;
-
-              return (
-                <div
-                  key={category.name}
-                  onMouseEnter={() => setHoveredCategory(category.name)}
-                  onMouseLeave={() => setHoveredCategory(null)}
-                  className={`p-4 rounded-xl border transition-all duration-250 cursor-pointer ${
-                    isHovered
-                      ? "border-slate-400 bg-slate-50/50 dark:border-slate-700/50 dark:bg-slate-900/30"
-                      : "border-slate-200/60 dark:border-slate-800/60 bg-white dark:bg-slate-950"
-                  }`}
-                >
-                  <div className="flex justify-between items-center mb-1.5">
-                    <div className="flex items-center gap-2">
-                      {renderIcon(category.icon, "text-slate-500 dark:text-slate-450")}
-                      <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                        {category.name}
-                      </span>
-                    </div>
-                    <span className="text-xs font-semibold text-slate-800 dark:text-slate-100 bg-slate-50 dark:bg-slate-900 px-2.5 py-0.5 rounded border border-slate-200 dark:border-slate-800">
-                      {score.toFixed(2)} / 7
-                    </span>
-                  </div>
-
-                  {/* Progressive Bar */}
-                  <div className="w-full h-1.5 bg-slate-100 dark:bg-slate-900 rounded-full overflow-hidden flex border border-slate-150 dark:border-slate-800">
-                    <div
-                      className="h-full bg-slate-400 rounded-full transition-all duration-500 ease-out"
-                      style={{ width: `${scorePercent}%` }}
-                    />
-                  </div>
-
-                  {isHovered && (
-                    <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed animate-fade-in">
-                      {category.description}
-                    </p>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-
-      {/* Health - Neutral Anchor */}
-      <div className="border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 rounded-2xl p-6">
-        {ASPIRATION_CATEGORIES.filter((c) => c.type === "neutral").map((category) => {
-          const score = scores[category.name][activeTab];
-          const scorePercent = (score / 7) * 100;
-
-          return (
-            <div
-              key={category.name}
-              onMouseEnter={() => setHoveredCategory(category.name)}
-              onMouseLeave={() => setHoveredCategory(null)}
-              className="cursor-help"
+          ) : (
+            <span
+              className={`text-xs font-bold px-2 py-0.5 rounded ${
+                centered >= 0
+                  ? "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400"
+                  : "bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-400"
+              }`}
             >
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-3">
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-slate-300" />
-                  {renderIcon(category.icon, "text-slate-600 dark:text-slate-400")}
-                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">
-                    Health Anchor Metric (Independent baseline)
-                  </h4>
-                </div>
-                <span className="text-xs font-semibold text-slate-800 dark:text-slate-300 bg-slate-50 dark:bg-slate-900 px-2.5 py-1 rounded-full border border-slate-200 dark:border-slate-800">
-                  {score.toFixed(2)} / 7
-                </span>
-              </div>
-              <div className="w-full h-1.5 bg-slate-100 dark:bg-slate-900 rounded-full overflow-hidden flex border border-slate-150 dark:border-slate-800">
+              {centered >= 0 ? "+" : ""}
+              {centered.toFixed(2)} vs. mean
+            </span>
+          )}
+        </div>
+
+        {scoringView === "raw" ? (
+          <div className="space-y-1.5">
+            {/* Dual overlay bar: translucent fill + marker = Importance, inner solid bar = Current Attainment */}
+            <div className="relative h-3 w-full rounded-md bg-slate-100 dark:bg-slate-900 overflow-hidden border border-slate-200/60 dark:border-slate-800">
+              <div
+                className="absolute inset-y-0 left-0 bg-indigo-500/15 dark:bg-indigo-400/20 border-r-2 border-indigo-600 dark:border-indigo-400 transition-all duration-300"
+                style={{ width: `${(score.importance / 7) * 100}%` }}
+                title={`Importance: ${score.importance.toFixed(2)} / 7`}
+              />
+              <div
+                className={`relative h-1.5 my-auto mt-[2px] rounded-r-sm transition-all duration-300 ${meta.barColor}`}
+                style={{ width: `${(score.attainment / 7) * 100}%` }}
+                title={`Current Attainment: ${score.attainment.toFixed(2)} / 7`}
+              />
+            </div>
+
+            <div className="flex justify-between text-[10px] text-slate-500 dark:text-slate-400">
+              <span>
+                Attained: <strong className="text-slate-700 dark:text-slate-300">{score.attainment.toFixed(1)}</strong>
+              </span>
+              <span>
+                Likely: <strong className="text-slate-700 dark:text-slate-300">{score.likelihood.toFixed(1)}</strong>
+              </span>
+              <span>
+                Value: <strong className="text-indigo-600 dark:text-indigo-400">{score.importance.toFixed(1)}</strong>
+              </span>
+            </div>
+          </div>
+        ) : (
+          /* Zero-centered relative priority bar */
+          <div className="space-y-1">
+            <div className="relative h-2.5 w-full rounded-full bg-slate-100 dark:bg-slate-900 overflow-hidden border border-slate-200/60 dark:border-slate-800">
+              <div className="absolute left-1/2 top-0 bottom-0 w-px bg-slate-400 dark:bg-slate-600 z-10" />
+              {centered >= 0 ? (
                 <div
-                  className="h-full bg-slate-500 rounded-full transition-all duration-500 ease-out"
-                  style={{ width: `${scorePercent}%` }}
+                  className="absolute top-0 bottom-0 bg-emerald-600 dark:bg-emerald-500 rounded-r-full transition-all duration-300"
+                  style={{ left: "50%", width: `${centeredWidthPct}%` }}
                 />
-              </div>
-              <p className="mt-3 text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-                {category.description} Cognitive psychologists treat physical healthcare as a foundational vital sign of a balanced student lifecycle.
+              ) : (
+                <div
+                  className="absolute top-0 bottom-0 bg-slate-400 dark:bg-slate-500 rounded-l-full transition-all duration-300"
+                  style={{ right: "50%", width: `${centeredWidthPct}%` }}
+                />
+              )}
+            </div>
+            <div className="flex justify-between text-[10px] text-slate-400">
+              <span>Below your average</span>
+              <span>0</span>
+              <span>Above your average</span>
+            </div>
+          </div>
+        )}
+      </button>
+    );
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* 1. Intrinsic vs. Extrinsic Balance across the 3 rating dimensions */}
+      <div className="bg-white dark:bg-slate-950 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+              <Scale size={16} className="text-indigo-600 dark:text-indigo-400" />
+              Intrinsic vs. Extrinsic Composite Balance
+            </h2>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              Compare how you value, expect, and currently experience intrinsic vs. extrinsic goals.
+            </p>
+          </div>
+
+          <div className="inline-flex rounded-lg bg-slate-100 dark:bg-slate-900 p-0.5 border border-slate-200 dark:border-slate-800 self-start">
+            {(["importance", "likelihood", "attainment"] as const).map((dim) => (
+              <button
+                key={dim}
+                type="button"
+                onClick={() => setBalanceDimension(dim)}
+                className={`px-2.5 py-1 rounded-md text-[11px] font-semibold capitalize transition-colors cursor-pointer ${
+                  balanceDimension === dim
+                    ? "bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 shadow-xs"
+                    : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-300"
+                }`}
+              >
+                {dim}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-center">
+          <div className="p-3.5 rounded-xl bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200/70 dark:border-emerald-800/50">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 block">
+              Intrinsic Composite
+            </span>
+            <span className="text-2xl font-bold text-slate-900 dark:text-slate-100">
+              {intrinsicVal.toFixed(2)}
+              <span className="text-xs font-normal text-slate-400"> / 7</span>
+            </span>
+            <span className="text-[11px] text-slate-500 dark:text-slate-400 block mt-0.5">
+              Growth · Relationships · Community
+            </span>
+          </div>
+
+          <div className="space-y-2 text-center">
+            <div className="relative h-4 w-full rounded-full bg-slate-100 dark:bg-slate-900 overflow-hidden flex border border-slate-200 dark:border-slate-800">
+              <div
+                className="h-full bg-emerald-600 dark:bg-emerald-500 transition-all duration-300"
+                style={{ width: `${intrinsicShare}%` }}
+              />
+              <div
+                className="h-full bg-amber-500/80 dark:bg-amber-500/70 transition-all duration-300"
+                style={{ width: `${100 - intrinsicShare}%` }}
+              />
+              <div className="absolute left-1/2 inset-y-0 w-0.5 bg-white dark:bg-slate-950" />
+            </div>
+            <span className="inline-block text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+              Difference ({balanceDimension}):{" "}
+              <strong
+                className={
+                  diff >= 0
+                    ? "text-emerald-700 dark:text-emerald-400"
+                    : "text-amber-700 dark:text-amber-400"
+                }
+              >
+                {diff >= 0 ? "+" : ""}
+                {diff.toFixed(2)}
+              </strong>{" "}
+              toward {diff >= 0 ? "Intrinsic" : "Extrinsic"}
+            </span>
+          </div>
+
+          <div className="p-3.5 rounded-xl bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200/70 dark:border-amber-800/50 sm:text-right">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400 block">
+              Extrinsic Composite
+            </span>
+            <span className="text-2xl font-bold text-slate-900 dark:text-slate-100">
+              {extrinsicVal.toFixed(2)}
+              <span className="text-xs font-normal text-slate-400"> / 7</span>
+            </span>
+            <span className="text-[11px] text-slate-500 dark:text-slate-400 block mt-0.5">
+              Wealth · Fame · Image
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* 2. Interactive 7-Subscale Explorer with Raw vs. Mean-Centered Psychometric Toggle */}
+      <div className="bg-white dark:bg-slate-950 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+              <SlidersHorizontal size={16} className="text-indigo-600 dark:text-indigo-400" />
+              Explore All 7 Subscales (Click any domain to inspect its 5 items)
+            </h2>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              {scoringView === "raw"
+                ? "Vertical indigo line = Importance; inner colored bar = Current Attainment."
+                : `Centered around your overall importance baseline (${analysis.overallMeanImportance.toFixed(2)}/7 across all 35 items).`}
+            </p>
+          </div>
+
+          <div className="inline-flex rounded-lg bg-slate-100 dark:bg-slate-900 p-0.5 border border-slate-200 dark:border-slate-800 self-start">
+            <button
+              type="button"
+              onClick={() => setScoringView("raw")}
+              className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors cursor-pointer ${
+                scoringView === "raw"
+                  ? "bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 shadow-xs"
+                  : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-300"
+              }`}
+            >
+              Raw &amp; Gaps (1–7)
+            </button>
+            <button
+              type="button"
+              onClick={() => setScoringView("centered")}
+              className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors cursor-pointer ${
+                scoringView === "centered"
+                  ? "bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 shadow-xs"
+                  : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-300"
+              }`}
+            >
+              Relative Priority (Centered)
+            </button>
+          </div>
+        </div>
+
+        {/* Educational note when viewing Mean-Centered scores */}
+        {scoringView === "centered" && (
+          <div className="p-3.5 rounded-xl bg-indigo-50/60 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800/60 flex items-start gap-2.5 text-xs text-slate-700 dark:text-slate-300">
+            <Info size={15} className="text-indigo-600 dark:text-indigo-400 shrink-0 mt-0.5" />
+            <p className="leading-relaxed">
+              <strong>Research Method Note (Mean-Centering):</strong> Some people rate almost every
+              goal 6–7, while others rate everything 3–4. Kasser &amp; Ryan subtract your personal
+              mean across all 35 goals (<strong>{analysis.overallMeanImportance.toFixed(2)}</strong>)
+              from each subscale so you can see what you prioritize <em>most</em> and{" "}
+              <em>least</em> relative to yourself.
+            </p>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          {/* Intrinsic Column */}
+          <div className="space-y-3">
+            <h3 className="text-[11px] font-bold uppercase tracking-widest text-emerald-700 dark:text-emerald-400">
+              Intrinsic Aspirations
+            </h3>
+            {ASPIRATION_CATEGORIES.filter((c) => c.factor === "intrinsic").map(renderCategoryCard)}
+          </div>
+
+          {/* Extrinsic Column */}
+          <div className="space-y-3">
+            <h3 className="text-[11px] font-bold uppercase tracking-widest text-amber-700 dark:text-amber-400">
+              Extrinsic Aspirations
+            </h3>
+            {ASPIRATION_CATEGORIES.filter((c) => c.factor === "extrinsic").map(renderCategoryCard)}
+          </div>
+        </div>
+
+        {/* Health Anchor */}
+        <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-2">
+          <h3 className="text-[11px] font-bold uppercase tracking-widest text-sky-700 dark:text-sky-400">
+            Physical Vitality Anchor (Scored Independently)
+          </h3>
+          {ASPIRATION_CATEGORIES.filter((c) => c.factor === "health").map(renderCategoryCard)}
+        </div>
+
+        {/* Selected Subscale Deep-Dive & Unmasked 5 Items */}
+        <div className="mt-4 p-5 rounded-2xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border ${selectedMeta.accentBg} ${selectedMeta.accentBorder} ${selectedMeta.accentText}`}
+              >
+                <CategoryIcon icon={selectedMeta.icon} />
+                {selectedMeta.name} Debrief
+              </span>
+              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                {selectedPattern.label}
+              </span>
+            </div>
+
+            <span className="text-xs text-slate-500 dark:text-slate-400">
+              Value <strong>{selectedScore.importance.toFixed(2)}</strong> · Likely{" "}
+              <strong>{selectedScore.likelihood.toFixed(2)}</strong> · Attained{" "}
+              <strong>{selectedScore.attainment.toFixed(2)}</strong>
+            </span>
+          </div>
+
+          <p className="text-xs sm:text-sm text-slate-700 dark:text-slate-200 leading-relaxed">
+            {selectedPattern.insight}
+          </p>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+            <div className="p-3.5 rounded-xl bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 space-y-1">
+              <span className="font-bold text-slate-900 dark:text-slate-100 block">
+                Why SDT Categorizes This Here
+              </span>
+              <p className="text-slate-600 dark:text-slate-300 leading-relaxed">
+                {selectedMeta.sdtExplanation}
               </p>
             </div>
-          );
-        })}
-      </div>
 
-      {/* Aspiration Attainment Gap Section */}
-      <div className="p-6 bg-white dark:bg-slate-950 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
-        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-          <Icons.GitCompare size={16} /> Motivational Relationship Analysis
-        </h4>
-        <p className="text-xs text-slate-500 dark:text-slate-400 mb-6 leading-relaxed">
-          The alignment below measures the ratio of your underlying values (Importance) with what you actually manifest in active life (Attainment). Large gaps are potent opportunities for alignment.
-        </p>
+            <div className="p-3.5 rounded-xl bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 space-y-1">
+              <span className="font-bold text-slate-900 dark:text-slate-100 block">
+                Needs Connection &amp; Healthy Lens
+              </span>
+              <p className="text-slate-600 dark:text-slate-300 leading-relaxed">
+                {selectedMeta.needsConnection} {selectedMeta.healthyReframe}
+              </p>
+            </div>
+          </div>
 
-        <div className="space-y-4">
-          {ASPIRATION_CATEGORIES.map((cat) => {
-            const importanceScore = scores[cat.name].importance;
-            const attainmentScore = scores[cat.name].attainment;
-
-            const gap = importanceScore - attainmentScore;
-
-            return (
-              <div key={cat.name} className="space-y-1">
-                <div className="flex justify-between text-[11px] font-semibold text-slate-700 dark:text-slate-400">
-                  <span>{cat.name}</span>
-                  <span className="font-medium text-[10px] text-slate-500">
-                    Value: <strong className="text-slate-800 dark:text-slate-200">{importanceScore.toFixed(1)}</strong> |
-                    Manifest: <strong className="text-slate-800 dark:text-slate-200">{attainmentScore.toFixed(1)}</strong>
-                    {gap > 1 ? (
-                      <span className="ml-2 text-indigo-600 dark:text-indigo-400 font-bold bg-slate-100 dark:bg-slate-900 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-800">
-                        Gap: +{gap.toFixed(1)}
-                      </span>
-                    ) : gap < -0.5 ? (
-                      <span className="ml-2 text-emerald-600 dark:text-emerald-400 font-bold bg-slate-100 dark:bg-slate-900 px-1.5 py-0.5 rounded border border-slate-250 dark:border-slate-800">
-                        Surplus
-                      </span>
-                    ) : (
-                      <span className="ml-2 text-slate-400 italic font-medium">Aligned</span>
+          {/* Unmasked 5 items belonging to this subscale */}
+          <div className="space-y-2 pt-1">
+            <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+              Your 5 Survey Items in {selectedMeta.name}
+            </h4>
+            <div className="divide-y divide-slate-200/70 dark:divide-slate-800 rounded-xl border border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-950 overflow-hidden">
+              {selectedItems.map((item) => {
+                const r = ratings[item.id];
+                return (
+                  <div
+                    key={item.id}
+                    className="px-3.5 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
+                  >
+                    <span className="text-slate-700 dark:text-slate-200">
+                      <span className="text-slate-400 font-mono mr-1.5">#{item.id}</span>
+                      {item.text}
+                    </span>
+                    {r && (
+                      <div className="flex items-center gap-2 shrink-0 text-[11px] text-slate-500 dark:text-slate-400">
+                        <span>
+                          Val <strong className="text-slate-800 dark:text-slate-200">{r.importance}</strong>
+                        </span>
+                        <span>·</span>
+                        <span>
+                          Lik <strong className="text-slate-800 dark:text-slate-200">{r.likelihood}</strong>
+                        </span>
+                        <span>·</span>
+                        <span>
+                          Att <strong className="text-slate-800 dark:text-slate-200">{r.attainment}</strong>
+                        </span>
+                      </div>
                     )}
-                  </span>
-                </div>
-
-                <div className="relative w-full h-3 bg-slate-50 dark:bg-slate-900 rounded flex overflow-hidden border border-slate-200/50 dark:border-slate-800/50">
-                  {/* Importance Fill (Translucent line representation) */}
-                  <div
-                    className="absolute top-0 left-0 h-full bg-indigo-500/10 dark:bg-indigo-400/10 border-r-2 border-indigo-550 transition-all duration-300"
-                    style={{ width: `${(importanceScore / 7) * 100}%` }}
-                  />
-
-                  {/* Attainment Solid Fill Bar */}
-                  <div
-                    className={`h-1.5 my-auto ml-1 rounded-sm transition-all duration-300 ${
-                      cat.type === "intrinsic"
-                        ? "bg-slate-800 dark:bg-slate-300"
-                        : "bg-slate-400"
-                    }`}
-                    style={{ width: `${Math.max(3, (attainmentScore / 7) * 98)}%` }}
-                  />
-                </div>
-              </div>
-            );
-          })}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
       </div>
     </div>

@@ -1,343 +1,533 @@
-import { useState, useEffect } from "react";
-import { AspirationGoal, GoalRatings, AspirationCategory } from "../types";
-import { ASPIRATION_GOALS, ASPIRATION_CATEGORIES } from "../data";
-import { ArrowLeft, ArrowRight, Info, Library, Sparkles, CheckSquare, Save } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ASPIRATION_GOALS } from "../data";
+import { GoalRatings, PartialGoalRatings, RatingDimension } from "../types";
+import {
+  ArrowLeft,
+  ArrowRight,
+  Check,
+  CheckCircle2,
+  Keyboard,
+  LayoutList,
+  Rows3,
+} from "lucide-react";
 
 interface AssessmentWizardProps {
+  initialDraft: Record<number, PartialGoalRatings>;
+  onSaveDraft: (draft: Record<number, PartialGoalRatings>, currentIndex: number) => void;
   onComplete: (ratings: Record<number, GoalRatings>) => void;
   onCancel: () => void;
-  savedRatings?: Record<number, GoalRatings>;
+  initialIndex?: number;
 }
 
-export default function AssessmentWizard({ onComplete, onCancel, savedRatings }: AssessmentWizardProps) {
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [ratings, setRatings] = useState<Record<number, GoalRatings>>(() => {
-    if (savedRatings && Object.keys(savedRatings).length > 0) {
-      return savedRatings;
-    }
-    return {};
-  });
+const DIMENSIONS: {
+  key: RatingDimension;
+  shortLabel: string;
+  question: string;
+  lowAnchor: string;
+  midAnchor: string;
+  highAnchor: string;
+}[] = [
+  {
+    key: "importance",
+    shortLabel: "Importance",
+    question: "How important is this goal to you?",
+    lowAnchor: "Not at all",
+    midAnchor: "Moderately",
+    highAnchor: "Very important",
+  },
+  {
+    key: "likelihood",
+    shortLabel: "Likelihood",
+    question: "How likely is it that you will attain this goal in your future?",
+    lowAnchor: "Very unlikely",
+    midAnchor: "Moderately",
+    highAnchor: "Very likely",
+  },
+  {
+    key: "attainment",
+    shortLabel: "Attainment",
+    question: "How much have you already achieved this goal so far?",
+    lowAnchor: "Not at all",
+    midAnchor: "Moderately",
+    highAnchor: "Completely",
+  },
+];
 
-  const [savingAlert, setSavingAlert] = useState(false);
+function isGoalComplete(entry?: PartialGoalRatings): entry is GoalRatings {
+  return Boolean(
+    entry &&
+      typeof entry.importance === "number" &&
+      typeof entry.likelihood === "number" &&
+      typeof entry.attainment === "number",
+  );
+}
+
+export default function AssessmentWizard({
+  initialDraft,
+  onSaveDraft,
+  onComplete,
+  onCancel,
+  initialIndex = 0,
+}: AssessmentWizardProps) {
+  const totalGoals = ASPIRATION_GOALS.length;
+  const [viewMode, setViewMode] = useState<"card" | "batch">("card");
+  const [autoAdvance, setAutoAdvance] = useState<boolean>(true);
+  const [currentIndex, setCurrentIndex] = useState<number>(() =>
+    Math.min(Math.max(initialIndex, 0), totalGoals - 1),
+  );
+  const [activeDim, setActiveDim] = useState<RatingDimension>("importance");
+  const [draft, setDraft] = useState<Record<number, PartialGoalRatings>>(initialDraft);
+  const advanceTimerRef = useRef<number | null>(null);
 
   const currentGoal = ASPIRATION_GOALS[currentIndex];
-  const totalGoals = ASPIRATION_GOALS.length;
+  const completedCount = ASPIRATION_GOALS.filter((g) => isGoalComplete(draft[g.id])).length;
+  const firstIncompleteIndex = ASPIRATION_GOALS.findIndex((g) => !isGoalComplete(draft[g.id]));
 
-  // Retrieve category design settings
-  const categoryMeta = ASPIRATION_CATEGORIES.find((c) => c.name === currentGoal?.category) || {
-    name: "Personal growth" as AspirationCategory,
-    type: "intrinsic" as const,
-    color: "text-slate-600",
-    borderColor: "border-slate-200",
-    bgColor: "bg-slate-50",
-    icon: "Sprout",
-    description: "",
-  };
-
-  // Safe fetch of current goal values, fallback to 4 (moderately)
-  const currentGoalRatings = ratings[currentGoal?.id] || {
-    importance: 4,
-    likelihood: 4,
-    attainment: 4,
-  };
-
-  // Auto-save progress draft container to localStorage during wizard sessions
+  // Persist draft whenever ratings or index change
   useEffect(() => {
-    if (Object.keys(ratings).length > 0) {
-      localStorage.setItem("aspiration_index_draft", JSON.stringify(ratings));
-      localStorage.setItem("aspiration_index_draft_index", currentIndex.toString());
-      setSavingAlert(true);
-      const timer = setTimeout(() => setSavingAlert(false), 800);
-      return () => clearTimeout(timer);
-    }
-  }, [ratings, currentIndex]);
+    onSaveDraft(draft, currentIndex);
+  }, [draft, currentIndex, onSaveDraft]);
 
-  // Load wizard draft-index if available
+  // Clean up any pending auto-advance timeout on unmount
   useEffect(() => {
-    const savedIdx = localStorage.getItem("aspiration_index_draft_index");
-    if (savedIdx && !savedRatings) {
-      const idx = parseInt(savedIdx, 10);
-      if (idx >= 0 && idx < totalGoals) {
-        setCurrentIndex(idx);
+    return () => {
+      if (advanceTimerRef.current !== null) {
+        window.clearTimeout(advanceTimerRef.current);
       }
-    }
+    };
   }, []);
 
-  const handleRatingChange = (metric: keyof GoalRatings, value: number) => {
-    setRatings((prev) => ({
-      ...prev,
-      [currentGoal.id]: {
-        ...currentGoalRatings,
-        [metric]: value,
-      },
-    }));
-  };
+  // Sync keyboard focus row to the first unanswered dimension when changing cards
+  useEffect(() => {
+    const entry = draft[currentGoal.id];
+    if (!entry?.importance) setActiveDim("importance");
+    else if (!entry?.likelihood) setActiveDim("likelihood");
+    else setActiveDim("attainment");
+  }, [currentIndex, currentGoal.id]);
 
-  const handleNext = () => {
-    if (currentIndex < totalGoals - 1) {
-      setCurrentIndex((prev) => prev + 1);
-    } else {
-      // Validate all are populated
-      const incompleteIds: number[] = [];
-      ASPIRATION_GOALS.forEach((g) => {
-        if (!ratings[g.id]) {
-          incompleteIds.push(g.id);
-        }
-      });
+  const setGoalRating = (goalId: number, dimension: RatingDimension, value: number) => {
+    if (advanceTimerRef.current !== null) {
+      window.clearTimeout(advanceTimerRef.current);
+      advanceTimerRef.current = null;
+    }
 
-      if (incompleteIds.length > 0) {
-        // Automatically default missing inputs to 4 (moderately) to avoid scoring exceptions
-        const fullRatings = { ...ratings };
-        ASPIRATION_GOALS.forEach((g) => {
-          if (!fullRatings[g.id]) {
-            fullRatings[g.id] = { importance: 4, likelihood: 4, attainment: 4 };
-          }
-        });
-        onComplete(fullRatings);
-      } else {
-        onComplete(ratings);
+    const prevEntry = draft[goalId] ?? {};
+    const wasAlreadyComplete = isGoalComplete(prevEntry);
+    const updatedEntry: PartialGoalRatings = {
+      ...prevEntry,
+      [dimension]: value,
+    };
+
+    const nextDraft = {
+      ...draft,
+      [goalId]: updatedEntry,
+    };
+    setDraft(nextDraft);
+
+    if (viewMode === "card" && goalId === currentGoal.id) {
+      if (!updatedEntry.importance) {
+        setActiveDim("importance");
+      } else if (!updatedEntry.likelihood) {
+        setActiveDim("likelihood");
+      } else if (!updatedEntry.attainment) {
+        setActiveDim("attainment");
+      } else if (autoAdvance && !wasAlreadyComplete && currentIndex < totalGoals - 1) {
+        advanceTimerRef.current = window.setTimeout(() => {
+          setCurrentIndex((idx) => Math.min(idx + 1, totalGoals - 1));
+          advanceTimerRef.current = null;
+        }, 220);
       }
     }
   };
 
-  const handleBack = () => {
-    if (currentIndex > 0) {
-      setCurrentIndex((prev) => prev - 1);
-    }
-  };
+  // Keyboard support in Focused Card mode: 1-7 rates active dimension, arrows navigate
+  useEffect(() => {
+    if (viewMode !== "card") return;
 
-  // Demo fill options for rapid grading/reviewing
-  const handleQuickDemoFill = () => {
-    const demoRatings: Record<number, GoalRatings> = {};
-    ASPIRATION_GOALS.forEach((goal) => {
-      // Create some authentic-looking profiles with a high focus on Intrinsic personal growth/community
-      if (goal.category === "Personal growth" || goal.category === "Relationships") {
-        demoRatings[goal.id] = {
-          importance: Math.floor(Math.random() * 2) + 6, // 6-7
-          likelihood: Math.floor(Math.random() * 2) + 5, // 5-6
-          attainment: Math.floor(Math.random() * 3) + 4, // 4-6
-        };
-      } else if (goal.category === "Community" || goal.category === "Health") {
-        demoRatings[goal.id] = {
-          importance: Math.floor(Math.random() * 3) + 5, // 5-7
-          likelihood: Math.floor(Math.random() * 2) + 5, // 5-6
-          attainment: Math.floor(Math.random() * 3) + 3, // 3-5
-        };
-      } else {
-        // Extrinsic (Wealth, fame, image)
-        demoRatings[goal.id] = {
-          importance: Math.floor(Math.random() * 3) + 2, // 2-4
-          likelihood: Math.floor(Math.random() * 3) + 3, // 3-5
-          attainment: Math.floor(Math.random() * 2) + 2, // 2-3
-        };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+      if (e.key >= "1" && e.key <= "7") {
+        e.preventDefault();
+        setGoalRating(currentGoal.id, activeDim, Number(e.key));
+      } else if (e.key === "ArrowLeft" && currentIndex > 0) {
+        e.preventDefault();
+        setCurrentIndex((i) => i - 1);
+      } else if (e.key === "ArrowRight" && currentIndex < totalGoals - 1) {
+        e.preventDefault();
+        setCurrentIndex((i) => i + 1);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  });
+
+  const handleFinish = () => {
+    if (firstIncompleteIndex !== -1) {
+      setCurrentIndex(firstIncompleteIndex);
+      return;
+    }
+    const finalRatings: Record<number, GoalRatings> = {};
+    ASPIRATION_GOALS.forEach((g) => {
+      const entry = draft[g.id];
+      if (isGoalComplete(entry)) {
+        finalRatings[g.id] = entry;
       }
     });
-    setRatings(demoRatings);
-    setCurrentIndex(totalGoals - 1);
+    onComplete(finalRatings);
   };
 
-  const progressPercent = ((currentIndex + 1) / totalGoals) * 100;
-  const answeredCount = Object.keys(ratings).length;
+  // Batch (5 per page) pagination helpers
+  const batchSize = 5;
+  const currentBatchPage = Math.floor(currentIndex / batchSize);
+  const totalBatchPages = Math.ceil(totalGoals / batchSize);
+  const batchGoals = ASPIRATION_GOALS.slice(
+    currentBatchPage * batchSize,
+    currentBatchPage * batchSize + batchSize,
+  );
 
   return (
-    <div className="max-w-xl mx-auto space-y-6 animate-fade-in" id="assessment-wizard">
-      {/* Wizard Header Status */}
-      <div className="flex justify-between items-center bg-white dark:bg-slate-950 p-4 rounded-xl border border-slate-200 dark:border-slate-800">
+    <div className="max-w-2xl mx-auto space-y-5 animate-fade-in">
+      {/* Top Control Bar */}
+      <div className="bg-white dark:bg-slate-950 rounded-2xl border border-slate-200 dark:border-slate-800 p-4 flex flex-wrap items-center justify-between gap-3 shadow-sm">
         <button
+          type="button"
           onClick={onCancel}
-          className="text-xs font-semibold text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 flex items-center gap-1.5 transition-colors cursor-pointer"
+          className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer"
         >
-          <ArrowLeft size={14} /> Exit Assessment
+          <ArrowLeft size={14} /> Save &amp; Exit
         </button>
 
-        <div className="text-right">
-          <span className="text-xs font-semibold text-slate-900 dark:text-slate-200 block">
-            Aspiration {currentIndex + 1} of {totalGoals}
-          </span>
-          <span className="text-[10px] font-medium text-indigo-600 dark:text-indigo-400">
-            {answeredCount} of {totalGoals} rated
+        <div className="flex items-center gap-2">
+          {/* View mode toggle */}
+          <div className="inline-flex rounded-lg bg-slate-100 dark:bg-slate-900 p-0.5 border border-slate-200 dark:border-slate-800">
+            <button
+              type="button"
+              onClick={() => setViewMode("card")}
+              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors cursor-pointer ${
+                viewMode === "card"
+                  ? "bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 shadow-xs"
+                  : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-300"
+              }`}
+              title="One goal at a time with keyboard shortcuts"
+            >
+              <Rows3 size={12} /> Single Card
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("batch")}
+              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors cursor-pointer ${
+                viewMode === "batch"
+                  ? "bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 shadow-xs"
+                  : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-300"
+              }`}
+              title="Rate 5 goals per page"
+            >
+              <LayoutList size={12} /> 5 per Page
+            </button>
+          </div>
+
+          <span className="text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-900 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-800">
+            {completedCount} / {totalGoals} complete
           </span>
         </div>
       </div>
 
-      {/* Progress slider bar */}
-      <div className="w-full bg-slate-200 dark:bg-slate-800 h-1 rounded-full overflow-hidden">
+      {/* Interactive 35-item Step Rail */}
+      <div className="space-y-1.5">
         <div
-          className="h-full bg-indigo-600 dark:bg-indigo-500 transition-all duration-300"
-          style={{ width: `${progressPercent}%` }}
-        />
-      </div>
-
-      {/* Primary Question Assessment Card */}
-      <div className="bg-white dark:bg-slate-950 p-6 sm:p-8 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-6">
-        {/* Goal focus category badge */}
-        <div className="flex flex-wrap items-center gap-2 justify-between">
-          <span
-            className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border ${categoryMeta.bgColor} ${categoryMeta.borderColor} ${categoryMeta.color}`}
-          >
-            {categoryMeta.name} Goal
-          </span>
-
-          <div className="flex items-center gap-1 text-[10px] text-slate-400 font-bold">
-            <Save size={12} className={savingAlert ? "text-indigo-500 animate-bounce" : "text-slate-300"} />
-            <span>{savingAlert ? "Saving draft" : "Saved locally"}</span>
-          </div>
-        </div>
-
-        {/* Life Goal Prompt text */}
-        <div className="space-y-1">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">
-            Aspiration Prompt
-          </span>
-          <h2 className="text-xl sm:text-2xl font-semibold tracking-tight text-slate-950 dark:text-slate-100 leading-tight">
-            &ldquo;{currentGoal?.text}&rdquo;
-          </h2>
-          <p className="text-xs text-slate-500 dark:text-slate-400 italic">
-            {categoryMeta.description}
-          </p>
-        </div>
-
-        {/* The 3 SDT rating questions */}
-        <div className="space-y-6 border-t border-slate-100 dark:border-slate-800/60 pt-5">
-          {/* Question 1: Importance (a) */}
-          <div className="space-y-3">
-            <div className="flex justify-between items-start gap-2">
-              <span className="text-xs font-medium text-slate-700 dark:text-slate-300">
-                (a) How <strong className="text-slate-900 dark:text-slate-100 font-bold">important</strong> is this goal to you?
-              </span>
-              <span className="text-xs font-semibold text-indigo-600 bg-indigo-50/50 dark:bg-indigo-950/40 px-2.5 py-0.5 rounded">
-                Score: {currentGoalRatings.importance}
-              </span>
-            </div>
-
-            <div className="flex justify-between gap-1 sm:gap-2">
-              {[1, 2, 3, 4, 5, 6, 7].map((num) => (
-                <button
-                  key={`imp-${num}`}
-                  type="button"
-                  onClick={() => handleRatingChange("importance", num)}
-                  className={`w-10 h-10 rounded-lg flex items-center justify-center text-xs transition-all cursor-pointer ${
-                    currentGoalRatings.importance === num
-                      ? "bg-slate-900 dark:bg-white text-white dark:text-slate-900 border border-slate-900 dark:border-white font-bold"
-                      : "bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-slate-400 dark:hover:border-slate-700 text-slate-700 dark:text-slate-300"
-                  }`}
-                >
-                  {num}
-                </button>
-              ))}
-            </div>
-            <div className="flex justify-between text-[9px] font-bold tracking-wider text-slate-400 uppercase">
-              <span>Not at all</span>
-              <span>Moderately</span>
-              <span>Very important</span>
-            </div>
-          </div>
-
-          {/* Question 2: Likelihood (b) */}
-          <div className="space-y-3">
-            <div className="flex justify-between items-start gap-2">
-              <span className="text-xs font-medium text-slate-700 dark:text-slate-300">
-                (b) How <strong className="text-slate-900 dark:text-slate-100 font-bold">likely</strong> is it that you will attain this goal?
-              </span>
-              <span className="text-xs font-semibold text-emerald-600 bg-emerald-50/50 dark:bg-emerald-950/40 px-2.5 py-0.5 rounded">
-                Score: {currentGoalRatings.likelihood}
-              </span>
-            </div>
-
-            <div className="flex justify-between gap-1 sm:gap-2">
-              {[1, 2, 3, 4, 5, 6, 7].map((num) => (
-                <button
-                  key={`like-${num}`}
-                  type="button"
-                  onClick={() => handleRatingChange("likelihood", num)}
-                  className={`w-10 h-10 rounded-lg flex items-center justify-center text-xs transition-all cursor-pointer ${
-                    currentGoalRatings.likelihood === num
-                      ? "bg-slate-900 dark:bg-white text-white dark:text-slate-900 border border-slate-900 dark:border-white font-bold"
-                      : "bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-slate-400 dark:hover:border-slate-700 text-slate-700 dark:text-slate-300"
-                  }`}
-                >
-                  {num}
-                </button>
-              ))}
-            </div>
-            <div className="flex justify-between text-[9px] font-bold tracking-wider text-slate-400 uppercase">
-              <span>Unlikely</span>
-              <span>Moderately</span>
-              <span>Extremely likely</span>
-            </div>
-          </div>
-
-          {/* Question 3: Attainment (c) */}
-          <div className="space-y-3">
-            <div className="flex justify-between items-start gap-2">
-              <span className="text-xs font-medium text-slate-700 dark:text-slate-300">
-                (c) How much have you <strong className="text-slate-900 dark:text-slate-100 font-bold">already achieved</strong> this goal?
-              </span>
-              <span className="text-xs font-semibold text-sky-600 bg-sky-50/50 dark:bg-sky-950/40 px-2.5 py-0.5 rounded">
-                Score: {currentGoalRatings.attainment}
-              </span>
-            </div>
-
-            <div className="flex justify-between gap-1 sm:gap-2">
-              {[1, 2, 3, 4, 5, 6, 7].map((num) => (
-                <button
-                  key={`attain-${num}`}
-                  type="button"
-                  onClick={() => handleRatingChange("attainment", num)}
-                  className={`w-10 h-10 rounded-lg flex items-center justify-center text-xs transition-all cursor-pointer ${
-                    currentGoalRatings.attainment === num
-                      ? "bg-slate-900 dark:bg-white text-white dark:text-slate-900 border border-slate-900 dark:border-white font-bold"
-                      : "bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-slate-400 dark:hover:border-slate-700 text-slate-700 dark:text-slate-300"
-                  }`}
-                >
-                  {num}
-                </button>
-              ))}
-            </div>
-            <div className="flex justify-between text-[9px] font-bold tracking-wider text-slate-400 uppercase">
-              <span>Not at all</span>
-              <span>Moderately</span>
-              <span>Completely</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Navigation Controllers */}
-      <div className="flex justify-between gap-4">
-        <button
-          type="button"
-          disabled={currentIndex === 0}
-          onClick={handleBack}
-          className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-slate-700 dark:bg-slate-900 dark:hover:bg-slate-800 dark:text-slate-300 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2 transition-all cursor-pointer"
+          className="grid gap-1"
+          style={{ gridTemplateColumns: `repeat(${totalGoals}, minmax(0, 1fr))` }}
+          aria-label="Questionnaire progress"
         >
-          <ArrowLeft size={14} /> Back
-        </button>
-
-        <button
-          type="button"
-          onClick={handleNext}
-          className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold uppercase tracking-wider shadow-sm flex items-center justify-center gap-2 transition-all cursor-pointer"
-        >
-          {currentIndex === totalGoals - 1 ? "Finish Assessment" : "Next Goal"} <ArrowRight size={14} />
-        </button>
-      </div>
-
-      {/* Test Quick Fill Section for Teacher / Grading Evaluators */}
-      <div className="p-4 bg-white dark:bg-slate-950 rounded-2xl border border-slate-200 dark:border-slate-800 text-center space-y-2">
-        <div className="flex items-center justify-center gap-2 text-slate-700 dark:text-slate-300 font-bold text-xs">
-          <Sparkles size={14} className="text-indigo-600" /> Assessment Simulation Option
+          {ASPIRATION_GOALS.map((goal, idx) => {
+            const done = isGoalComplete(draft[goal.id]);
+            const isActive =
+              viewMode === "card"
+                ? idx === currentIndex
+                : Math.floor(idx / batchSize) === currentBatchPage;
+            return (
+              <button
+                key={goal.id}
+                type="button"
+                onClick={() => setCurrentIndex(idx)}
+                title={`Goal ${idx + 1}${done ? " (rated)" : " (unrated)"}`}
+                className={`h-2 rounded-full transition-all cursor-pointer ${
+                  isActive
+                    ? "bg-indigo-600 dark:bg-indigo-400 ring-2 ring-indigo-500/30"
+                    : done
+                    ? "bg-emerald-500 dark:bg-emerald-500/80 hover:bg-emerald-600"
+                    : "bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700"
+                }`}
+              />
+            );
+          })}
         </div>
-        <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed max-w-sm mx-auto">
-          For evaluation convenience, simulate a complete student matrix instantly without completing each scale rating manually.
+        <p className="text-[11px] text-slate-500 dark:text-slate-400 flex justify-between">
+          <span>Answer honestly for your life as it is—there are no right or wrong scores.</span>
+          {completedCount === totalGoals && (
+            <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
+              All 35 goals rated!
+            </span>
+          )}
         </p>
-        <button
-          type="button"
-          onClick={handleQuickDemoFill}
-          className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-850 text-slate-800 dark:text-slate-300 rounded-xl text-[11px] font-bold border border-slate-200 dark:border-slate-850 transition-all cursor-pointer"
-        >
-          ⚡ Populate Responses Instantly
-        </button>
+      </div>
+
+      {/* SINGLE CARD MODE */}
+      {viewMode === "card" && (
+        <div className="bg-white dark:bg-slate-950 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 sm:p-8 shadow-sm space-y-6">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-bold uppercase tracking-widest text-indigo-600 dark:text-indigo-400">
+              Life Goal {currentIndex + 1} of {totalGoals}
+            </span>
+
+            <label className="inline-flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={autoAdvance}
+                onChange={(e) => setAutoAdvance(e.target.checked)}
+                className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+              />
+              Auto-next card
+            </label>
+          </div>
+
+          <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-950 dark:text-slate-50 leading-snug">
+            &ldquo;{currentGoal.text}&rdquo;
+          </h2>
+
+          {/* Three Rating Dimensions */}
+          <div className="space-y-4 pt-2 border-t border-slate-100 dark:border-slate-800">
+            {DIMENSIONS.map((dim) => {
+              const selectedValue = draft[currentGoal.id]?.[dim.key];
+              const isFocusedRow = activeDim === dim.key;
+
+              return (
+                <div
+                  key={dim.key}
+                  onClick={() => setActiveDim(dim.key)}
+                  className={`p-3.5 rounded-xl border transition-colors ${
+                    isFocusedRow
+                      ? "border-indigo-300 dark:border-indigo-700 bg-indigo-50/30 dark:bg-indigo-950/20"
+                      : "border-slate-200/70 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-900/30"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2 mb-2.5">
+                    <span className="text-xs sm:text-sm font-medium text-slate-800 dark:text-slate-200">
+                      {dim.question}
+                    </span>
+                    {typeof selectedValue === "number" ? (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 px-2 py-0.5 rounded-md border border-emerald-200 dark:border-emerald-800/60 shrink-0">
+                        <Check size={11} /> {selectedValue}/7
+                      </span>
+                    ) : (
+                      <span className="text-[11px] font-medium text-slate-400 shrink-0">
+                        Select 1–7
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-7 gap-1.5 sm:gap-2">
+                    {[1, 2, 3, 4, 5, 6, 7].map((num) => {
+                      const active = selectedValue === num;
+                      return (
+                        <button
+                          key={num}
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setGoalRating(currentGoal.id, dim.key, num);
+                          }}
+                          className={`h-10 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                            active
+                              ? "bg-slate-900 dark:bg-white text-white dark:text-slate-950 shadow-xs scale-[1.02]"
+                              : "bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500"
+                          }`}
+                        >
+                          {num}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="flex justify-between text-[10px] font-medium text-slate-400 mt-1.5 px-0.5">
+                    <span>1 · {dim.lowAnchor}</span>
+                    <span>4 · {dim.midAnchor}</span>
+                    <span>7 · {dim.highAnchor}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="hidden sm:flex items-center gap-1.5 text-[11px] text-slate-400 pt-1">
+            <Keyboard size={13} />
+            <span>
+              Tip: Press keys <strong>1–7</strong> to rate the highlighted row, and{" "}
+              <strong>← / →</strong> to move between goals.
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* 5-PER-PAGE BATCH MODE */}
+      {viewMode === "batch" && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 px-1">
+            <span className="font-semibold text-slate-700 dark:text-slate-200">
+              Page {currentBatchPage + 1} of {totalBatchPages} (Goals{" "}
+              {currentBatchPage * batchSize + 1}–
+              {Math.min((currentBatchPage + 1) * batchSize, totalGoals)})
+            </span>
+            <span>Scale: 1 (Not at all) · 4 (Moderately) · 7 (Very much)</span>
+          </div>
+
+          {batchGoals.map((goal) => {
+            const entry = draft[goal.id];
+            const complete = isGoalComplete(entry);
+            return (
+              <div
+                key={goal.id}
+                className="bg-white dark:bg-slate-950 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 shadow-sm space-y-4"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                      Goal {goal.id}
+                    </span>
+                    <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
+                      &ldquo;{goal.text}&rdquo;
+                    </h3>
+                  </div>
+                  {complete && (
+                    <CheckCircle2
+                      size={18}
+                      className="text-emerald-600 dark:text-emerald-400 shrink-0 mt-1"
+                    />
+                  )}
+                </div>
+
+                <div className="space-y-2.5 pt-2 border-t border-slate-100 dark:border-slate-800">
+                  {DIMENSIONS.map((dim) => {
+                    const selected = entry?.[dim.key];
+                    return (
+                      <div
+                        key={dim.key}
+                        className="flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+                      >
+                        <span className="text-xs font-medium text-slate-600 dark:text-slate-300">
+                          <strong className="text-slate-800 dark:text-slate-100">
+                            {dim.shortLabel}:
+                          </strong>{" "}
+                          {dim.question}
+                        </span>
+                        <div className="grid grid-cols-7 gap-1 shrink-0 sm:w-64">
+                          {[1, 2, 3, 4, 5, 6, 7].map((num) => (
+                            <button
+                              key={num}
+                              type="button"
+                              onClick={() => setGoalRating(goal.id, dim.key, num)}
+                              className={`h-8 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
+                                selected === num
+                                  ? "bg-slate-900 dark:bg-white text-white dark:text-slate-950"
+                                  : "bg-slate-50 dark:bg-slate-900 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-800 hover:border-slate-400"
+                              }`}
+                            >
+                              {num}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Bottom Navigation & Completion Action */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-1">
+        {viewMode === "card" ? (
+          <>
+            <button
+              type="button"
+              disabled={currentIndex === 0}
+              onClick={() => setCurrentIndex((i) => Math.max(0, i - 1))}
+              className="px-4 py-3 rounded-xl bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-800 text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <ArrowLeft size={14} /> Previous Goal
+            </button>
+
+            {currentIndex < totalGoals - 1 && completedCount < totalGoals ? (
+              <button
+                type="button"
+                onClick={() => setCurrentIndex((i) => Math.min(totalGoals - 1, i + 1))}
+                className="px-5 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 shadow-sm transition-colors cursor-pointer"
+              >
+                Next Goal <ArrowRight size={14} />
+              </button>
+            ) : completedCount === totalGoals ? (
+              <button
+                type="button"
+                onClick={handleFinish}
+                className="px-5 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 shadow-sm transition-colors cursor-pointer"
+              >
+                Reveal Subscales &amp; Learning Report <ArrowRight size={14} />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setCurrentIndex(firstIncompleteIndex)}
+                className="px-5 py-3 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 shadow-sm transition-colors cursor-pointer"
+              >
+                Jump to Unrated Goal #{firstIncompleteIndex + 1} ({totalGoals - completedCount} left)
+              </button>
+            )}
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              disabled={currentBatchPage === 0}
+              onClick={() => setCurrentIndex(Math.max(0, (currentBatchPage - 1) * batchSize))}
+              className="px-4 py-3 rounded-xl bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-800 text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <ArrowLeft size={14} /> Previous Page
+            </button>
+
+            {currentBatchPage < totalBatchPages - 1 && completedCount < totalGoals ? (
+              <button
+                type="button"
+                onClick={() =>
+                  setCurrentIndex(Math.min(totalGoals - 1, (currentBatchPage + 1) * batchSize))
+                }
+                className="px-5 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 shadow-sm transition-colors cursor-pointer"
+              >
+                Next Page <ArrowRight size={14} />
+              </button>
+            ) : completedCount === totalGoals ? (
+              <button
+                type="button"
+                onClick={handleFinish}
+                className="px-5 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 shadow-sm transition-colors cursor-pointer"
+              >
+                Reveal Subscales &amp; Learning Report <ArrowRight size={14} />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setCurrentIndex(firstIncompleteIndex)}
+                className="px-5 py-3 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 shadow-sm transition-colors cursor-pointer"
+              >
+                Go to Unrated Goal #{firstIncompleteIndex + 1} ({totalGoals - completedCount} left)
+              </button>
+            )}
+          </>
+        )}
       </div>
     </div>
   );
